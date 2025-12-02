@@ -21,21 +21,38 @@
 #include "node.h"
 #include "event.h"
 
+#include <string.h>
+
 static bool
 below_assoc_threshold(struct usteer_node *node_cur, struct usteer_node *node_new)
 {
 	int n_assoc_cur = node_cur->n_assoc;
 	int n_assoc_new = node_new->n_assoc;
-	bool ref_5g = node_cur->freq > 4000;
-	bool node_5g = node_new->freq > 4000;
+	int band_cur, band_new;
 
 	if (!config.load_balancing_threshold)
 		return false;
 
-	if (ref_5g && !node_5g)
-		n_assoc_new += config.band_steering_threshold;
-	else if (!ref_5g && node_5g)
+	/* Determine band priorities: 2.4 GHz = 0, 5 GHz = 1, 6 GHz = 2 */
+	if (is_2ghz_freq(node_cur->freq))
+		band_cur = 0;
+	else if (is_5ghz_freq(node_cur->freq))
+		band_cur = 1;
+	else
+		band_cur = 2;
+
+	if (is_2ghz_freq(node_new->freq))
+		band_new = 0;
+	else if (is_5ghz_freq(node_new->freq))
+		band_new = 1;
+	else
+		band_new = 2;
+
+	/* Apply band steering threshold: prefer higher bands */
+	if (band_new > band_cur)
 		n_assoc_cur += config.band_steering_threshold;
+	else if (band_cur > band_new)
+		n_assoc_new += config.band_steering_threshold;
 
 	n_assoc_new += config.load_balancing_threshold;
 
@@ -77,7 +94,16 @@ usteer_policy_node_below_max_assoc(struct usteer_node *node)
 static bool
 over_min_signal(struct usteer_node *node, int signal)
 {
-	if (config.min_snr && signal < usteer_snr_to_signal(node, config.min_snr))
+	int32_t min_snr = config.min_snr;
+
+	if (is_2ghz_freq(node->freq) && config.min_snr_2g)
+		min_snr = config.min_snr_2g;
+	else if (is_5ghz_freq(node->freq) && config.min_snr_5g)
+		min_snr = config.min_snr_5g;
+	else if (is_6ghz_freq(node->freq) && config.min_snr_6g)
+		min_snr = config.min_snr_6g;
+
+	if (min_snr && signal < usteer_snr_to_signal(node, min_snr))
 		return false;
 
 	if (config.roam_trigger_snr && signal < usteer_snr_to_signal(node, config.roam_trigger_snr))
@@ -105,7 +131,9 @@ is_better_candidate(struct sta_info *si_cur, struct sta_info *si_new)
 	    !below_assoc_threshold(new_node, current_node))
 		reasons |= (1 << UEV_SELECT_REASON_NUM_ASSOC);
 
-	if (better_signal_strength(current_signal, new_signal))
+	/* If band steering will bounce us back, ignore comparing the signal (note flipped si_new, si_cur) */
+	if (!usteer_will_band_steer(si_new, si_cur) &&
+	    better_signal_strength(current_signal, new_signal))
 		reasons |= (1 << UEV_SELECT_REASON_SIGNAL);
 
 	if (has_better_load(current_node, new_node) &&
@@ -113,6 +141,22 @@ is_better_candidate(struct sta_info *si_cur, struct sta_info *si_new)
 		reasons |= (1 << UEV_SELECT_REASON_LOAD);
 
 	return reasons;
+}
+
+static bool
+usteer_policy_sta_to_ignore(struct sta_info *si_cur)
+{
+	char macAddr[24];
+	int i = 0;
+	
+	if (!config.ignored_stations)
+		return false;
+
+	for (i = 0; i < 6; i++)
+		sprintf(&(macAddr[3 * i]), "%02X:", si_cur->sta->addr[i]);
+	macAddr[17] = 0;
+
+	return (strstr(config.ignored_stations, macAddr) != NULL);
 }
 
 static struct sta_info *
@@ -147,7 +191,7 @@ find_better_candidate(struct sta_info *si_ref, struct uevent *ev, uint32_t requi
 			ev->select_reasons = reasons;
 		}
 
-		if (!candidate || si->signal > candidate->signal)
+		if (!candidate || (is_better_candidate(candidate, si) && si->signal > candidate->signal))
 			candidate = si;
 	}
 
@@ -216,6 +260,15 @@ usteer_check_request(struct sta_info *si, enum usteer_event_type type)
 		ret = false;
 		goto out;
 	}
+
+	/* 
+	 * ZERO DOWNTIME POLICY:
+	 * If we are in AUTH or ASSOC phase, DO NOT REJECT even if a better candidate exists.
+	 * Rejection here causes the client to blacklist the SSID or drop connection.
+	 * We will steer the client LATER (post-association) using 802.11v BSS Transition.
+	 */
+	if (type == EVENT_TYPE_AUTH || type == EVENT_TYPE_ASSOC)
+		goto out;
 
 	if (!find_better_candidate(si, &ev, UEV_SELECT_REASON_ALL, 0))
 		goto out;
@@ -415,6 +468,10 @@ bool usteer_policy_can_perform_roam(struct sta_info *si)
 	if (si->connected != STA_CONNECTED)
 		return false;
 
+	/* Skip if station should be ignored */
+	if (usteer_policy_sta_to_ignore(si))
+		return false;
+
 	/* Only trigger for STA with active roaming */
 	if (!si->sta->aggressiveness)
 		return false;
@@ -494,20 +551,32 @@ static void
 usteer_local_node_snr_kick(struct usteer_local_node *ln)
 {
 	unsigned int min_count = DIV_ROUND_UP(config.min_snr_kick_delay, config.local_sta_update);
+	struct usteer_node *node = &ln->node;
 	struct uevent ev = {
-		.node_local = &ln->node,
+		.node_local = node,
 	};
 	struct sta_info *si;
 	int min_signal;
+	int32_t min_snr = config.min_snr;
 
-	if (!config.min_snr)
+	if (is_2ghz_freq(node->freq) && config.min_snr_2g)
+		min_snr = config.min_snr_2g;
+	else if (is_5ghz_freq(node->freq) && config.min_snr_5g)
+		min_snr = config.min_snr_5g;
+	else if (is_6ghz_freq(node->freq) && config.min_snr_6g)
+		min_snr = config.min_snr_6g;
+
+	if (!min_snr)
 		return;
 
-	min_signal = usteer_snr_to_signal(&ln->node, config.min_snr);
+	min_signal = usteer_snr_to_signal(node, min_snr);
 	ev.threshold.ref = min_signal;
 
 	list_for_each_entry(si, &ln->node.sta_info, node_list) {
 		if (si->connected != STA_CONNECTED)
+			continue;
+
+		if (usteer_policy_sta_to_ignore(si))
 			continue;
 
 		if (si->signal >= min_signal) {
@@ -578,6 +647,9 @@ usteer_local_node_load_kick(struct usteer_local_node *ln)
 		struct sta_info *tmp;
 
 		if (si->connected != STA_CONNECTED)
+			continue;
+
+		if (usteer_policy_sta_to_ignore(si))
 			continue;
 
 		if (is_more_kickable(kick1, si))

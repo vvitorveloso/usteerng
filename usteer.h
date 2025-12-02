@@ -176,6 +176,9 @@ struct usteer_config {
 	uint32_t reassociation_delay;
 
 	int32_t min_snr;
+	int32_t min_snr_2g;
+	int32_t min_snr_5g;
+	int32_t min_snr_6g;
 	uint32_t min_snr_kick_delay;
 	int32_t min_connect_snr;
 	uint32_t signal_diff_threshold;
@@ -210,6 +213,8 @@ struct usteer_config {
 
 	const char *node_up_script;
 	uint32_t event_log_mask;
+
+	char *ignored_stations;
 
 	struct blob_attr *ssid_list;
 };
@@ -293,6 +298,7 @@ struct sta {
 
 	uint8_t seen_2ghz : 1;
 	uint8_t seen_5ghz : 1;
+	uint8_t seen_6ghz : 1;
 
 	uint32_t aggressiveness;
 
@@ -343,6 +349,7 @@ bool usteer_policy_can_perform_roam(struct sta_info *si);
 void usteer_band_steering_perform_steer(struct usteer_local_node *ln);
 void usteer_band_steering_sta_update(struct sta_info *si);
 bool usteer_band_steering_is_target(struct usteer_local_node *ln, struct usteer_node *node);
+bool usteer_will_band_steer(struct sta_info *si_cur, struct sta_info *si_new);
 
 void usteer_ubus_init(struct ubus_context *ctx);
 void usteer_ubus_kick_client(struct sta_info *si, uint32_t kick_reason_code);
@@ -392,6 +399,9 @@ void config_get_node_up_script(struct blob_buf *buf);
 
 void config_set_ssid_list(struct blob_attr *data);
 void config_get_ssid_list(struct blob_buf *buf);
+
+void config_set_ignored_stations(struct blob_attr *data);
+void config_get_ignored_stations(struct blob_buf *buf);
 
 void config_set_aggressiveness_mac_list(struct blob_attr *data);
 void config_get_aggressiveness_mac_list(struct blob_buf *buf);

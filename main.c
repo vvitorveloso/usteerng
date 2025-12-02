@@ -99,6 +99,10 @@ void usteer_init_defaults(void)
 	config.reassociation_delay = 30;
 	config.aggressiveness = 3;
 
+	config.min_snr_2g = 0;
+	config.min_snr_5g = 0;
+	config.min_snr_6g = 0;
+
 	config.steer_reject_timeout = 60000;
 
 	config.band_steering_interval = 30000;

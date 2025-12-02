@@ -106,6 +106,7 @@ usteer_ubus_get_client_info(struct ubus_context *ctx, struct ubus_object *obj,
 	blob_buf_init(&b, 0);
 	blobmsg_add_u8(&b, "2ghz", sta->seen_2ghz);
 	blobmsg_add_u8(&b, "5ghz", sta->seen_5ghz);
+	blobmsg_add_u8(&b, "6ghz", sta->seen_6ghz);
 	_n = blobmsg_open_table(&b, "nodes");
 	list_for_each_entry(si, &sta->nodes, list) {
 		_cur_n = blobmsg_open_table(&b, usteer_node_name(si->node));
@@ -167,6 +168,9 @@ struct cfg_item {
 	_cfg(U32, aggressive_disassoc_timer), \
 	_cfg(I32, min_connect_snr), \
 	_cfg(I32, min_snr), \
+	_cfg(I32, min_snr_2g), \
+	_cfg(I32, min_snr_5g), \
+	_cfg(I32, min_snr_6g), \
 	_cfg(U32, min_snr_kick_delay), \
 	_cfg(U32, steer_reject_timeout), \
 	_cfg(U32, roam_process_timeout), \
@@ -190,6 +194,7 @@ struct cfg_item {
 	_cfg(ARRAY_CB, interfaces), \
 	_cfg(STRING_CB, node_up_script), \
 	_cfg(ARRAY_CB, event_log_types), \
+	_cfg(STRING_CB, ignored_stations), \
 	_cfg(ARRAY_CB, ssid_list)
 
 enum cfg_items {

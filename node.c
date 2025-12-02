@@ -102,15 +102,27 @@ usteer_node_better_neighbor(struct usteer_node *node, struct usteer_node *ref)
 
 	/**
 	 * 1. Return one node if the other one is NULL
-	 * 2. Return the node with the higher roam events.
-	 * 3. Return the node with the higher BSSID.
-	 * 4. Return first method argument.
+	 * 2. Prioritize 6GHz > 5GHz > 2.4GHz
+	 * 3. Return the node with the higher roam events.
+	 * 4. Return the node with the higher BSSID.
+	 * 5. Return first method argument.
 	 */
 
 	if (!ref)
 		return node;
 
 	if (!node)
+		return ref;
+
+	/* Prioritize higher frequency bands */
+	if (is_6ghz_freq(node->freq) && !is_6ghz_freq(ref->freq))
+		return node;
+	if (!is_6ghz_freq(node->freq) && is_6ghz_freq(ref->freq))
+		return ref;
+
+	if (is_5ghz_freq(node->freq) && is_2ghz_freq(ref->freq))
+		return node;
+	if (is_2ghz_freq(node->freq) && is_5ghz_freq(ref->freq))
 		return ref;
 
 	n1 = usteer_node_higher_roamability(node, ref);
