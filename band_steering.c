@@ -41,24 +41,51 @@ void usteer_band_steering_sta_update(struct sta_info *si)
 		si->band_steering.below_snr = true;
 }
 
+static bool band_steering_is_target(struct usteer_node *cur, struct usteer_node *new)
+{
+	if (cur == new)
+		return false;
+
+	if (strcmp(cur->ssid, new->ssid))
+		return false;
+
+	/* Progressive band steering: 2.4 GHz → 5 GHz → 6 GHz */
+	if (is_2ghz_freq(cur->freq)) {
+		/* From 2.4 GHz, target 5 GHz only */
+		if (!is_5ghz_freq(new->freq))
+			return false;
+	} else if (is_5ghz_freq(cur->freq)) {
+		/* From 5 GHz, target 6 GHz only */
+		if (!is_6ghz_freq(new->freq))
+			return false;
+	} else {
+		/* From 6 GHz, no steering (already on highest band) */
+		return false;
+	}
+
+	if (!usteer_policy_node_below_max_assoc(new))
+		return false;
+
+	/* ToDo: Skip nodes with active load-kick */
+
+	return true;
+}
+
 bool usteer_band_steering_is_target(struct usteer_local_node *ln, struct usteer_node *node)
 {
-	if (&ln->node == node)
+	return band_steering_is_target(&ln->node, node);
+}
+
+bool usteer_will_band_steer(struct sta_info *si_cur, struct sta_info *si_new)
+{
+	if (!config.band_steering_interval)
 		return false;
 
-	if (strcmp(ln->node.ssid, node->ssid))
+	if (is_6ghz_freq(si_cur->node->freq))
 		return false;
 
-	if (node->freq < 4000)
-		return false;
-
-	if (!usteer_policy_node_below_max_assoc(node))
-		return false;
-	
-	/* ToDo: Skip nodes with active load-kick */
-	
-	return true;
- }
+	return band_steering_is_target(si_cur->node, si_new->node);
+}
 
 
 static bool usteer_band_steering_has_target_iface(struct usteer_local_node *ln)
@@ -83,8 +110,8 @@ void usteer_band_steering_perform_steer(struct usteer_local_node *ln)
 	if (!config.band_steering_interval)
 		return;
 
-	/* Band-Steering is only available on 2.4 GHz interfaces */
-	if (ln->node.freq > 4000)
+	/* Band-Steering is available on 2.4 GHz (to 5 GHz) and 5 GHz (to 6 GHz) interfaces */
+	if (is_6ghz_freq(ln->node.freq))
 		return;
 
 	/* Check if we have an interface we can steer to */

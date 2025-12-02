@@ -114,7 +114,7 @@ usteer_ubus_get_client_info(struct ubus_context *ctx, struct ubus_object *obj,
 		blobmsg_add_u32(&b, "signal", si->signal);
 		_s = blobmsg_open_table(&b, "stats");
 		for (i = 0; i < __EVENT_TYPE_MAX; i++)
-			usteer_ubus_add_stats(&si->stats[EVENT_TYPE_PROBE], event_types[i]);
+			usteer_ubus_add_stats(&si->stats[i], event_types[i]);
 		blobmsg_close_table(&b, _s);
 		blobmsg_close_table(&b, _cur_n);
 	}
